@@ -24,10 +24,10 @@ import UIKit
     @objc optional func richEditorLostFocus(_ editor: RichEditorView)
     
     /// Called when the RichEditorView has become ready to receive input
-    /// More concretely, is called when the internal UIWebView loads for the first time, and contentHTML is set
+    /// More concretely, is called when the internal WKWebView loads for the first time, and contentHTML is set
     @objc optional func richEditorDidLoad(_ editor: RichEditorView)
     
-    /// Called when the internal UIWebView begins loading a URL that it does not know how to respond to
+    /// Called when the internal WKWebView begins loading a URL that it does not know how to respond to
     /// For example, if there is an external link, and then the user taps it
     @objc optional func richEditor(_ editor: RichEditorView, shouldInteractWith url: URL) -> Bool
     
@@ -37,7 +37,7 @@ import UIKit
 }
 
 /// RichEditorView is a UIView that displays richly styled text, and allows it to be edited in a WYSIWYG fashion.
-@objcMembers open class RichEditorView: UIView, UIScrollViewDelegate, UIWebViewDelegate, UIGestureRecognizerDelegate {
+@objcMembers open class RichEditorView: UIView, UIScrollViewDelegate, WKNavigationDelegate, UIGestureRecognizerDelegate {
 
     // MARK: Public Properties
 
@@ -51,8 +51,8 @@ import UIKit
         set { webView.cjw_inputAccessoryView = newValue }
     }
 
-    /// The internal UIWebView that is used to display the text.
-    open private(set) var webView: UIWebView
+    /// The internal WKWebView that is used to display the text.
+    open private(set) var webView: WKWebView
 
     /// Whether or not scroll is enabled on the view.
     open var isScrollEnabled: Bool = true {
@@ -123,13 +123,13 @@ import UIKit
     // MARK: Initialization
     
     public override init(frame: CGRect) {
-        webView = UIWebView()
+        webView = WKWebView()
         super.init(frame: frame)
         setup()
     }
 
     required public init?(coder aDecoder: NSCoder) {
-        webView = UIWebView()
+        webView = WKWebView()
         super.init(coder: aDecoder)
         setup()
     }
@@ -138,11 +138,12 @@ import UIKit
         backgroundColor = .red
         
         webView.frame = bounds
-        webView.delegate = self
-        webView.keyboardDisplayRequiresUserAction = false
-        webView.scalesPageToFit = false
+        webView.navigationDelegate = self
+        webView.uiDelegate
+//        webView.keyboardDisplayRequiresUserAction = false
+//        webView.scalesPageToFit = false
         webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        webView.dataDetectorTypes = UIDataDetectorTypes()
+//        webView.dataDetectorTypes = UIDataDetectorTypes()
         webView.backgroundColor = .white
         
         webView.scrollView.isScrollEnabled = isScrollEnabled
@@ -157,7 +158,7 @@ import UIKit
         if let filePath = Bundle(for: RichEditorView.self).path(forResource: "rich_editor", ofType: "html") {
             let url = URL(fileURLWithPath: filePath, isDirectory: false)
             let request = URLRequest(url: url)
-            webView.loadRequest(request)
+            webView.load(request)
         }
 
         tapRecognizer.addTarget(self, action: #selector(viewWasTapped))
@@ -342,14 +343,14 @@ import UIKit
         runJS("RE.blurFocus()")
     }
 
-    /// Runs some JavaScript on the UIWebView and returns the result
+    /// Runs some JavaScript on the WKWebView and returns the result
     /// If there is no result, returns an empty string
     /// - parameter js: The JavaScript string to be run
     /// - returns: The result of the JavaScript that was run
     @discardableResult
     public func runJS(_ js: String) -> String {
-        let string = webView.stringByEvaluatingJavaScript(from: js) ?? ""
-        return string
+         webView.evaluateJavaScript(js)
+        return "true"
     }
 
 
@@ -366,12 +367,13 @@ import UIKit
     }
 
 
-    // MARK: UIWebViewDelegate
-
-    public func webView(_ webView: UIWebView, shouldStartLoadWith request: URLRequest, navigationType: UIWebView.NavigationType) -> Bool {
-
-        // Handle pre-defined editor actions
-        let callbackPrefix = "re-callback://"
+    // MARK: WKWebViewDelegate
+    
+    public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+ 
+//        switch navigationAction.navigationType {
+            let callbackPrefix = "re-callback://"
+        let request = navigationAction.request
         if request.url?.absoluteString.hasPrefix(callbackPrefix) == true {
             
             // When we get a callback, we need to fetch the command queue to run the commands
@@ -390,23 +392,21 @@ import UIKit
 
                 jsonCommands.forEach(performCommand)
             }
-
-            return false
+            decisionHandler(.cancel)
         }
         
         // User is tapping on a link, so we should react accordingly
-        if navigationType == .linkClicked {
-            if let
-                url = request.url,
-                let shouldInteract = delegate?.richEditor?(self, shouldInteractWith: url)
-            {
-                return shouldInteract
+        
+        if navigationAction.navigationType == .linkActivated {
+            if let url = request.url,
+               let shouldInteract = delegate?.richEditor?(self, shouldInteractWith: url) {
+                if !shouldInteract {
+                    decisionHandler(.cancel)
+                }
             }
         }
-        
-        return true
+        decisionHandler(.allow)
     }
-
 
     // MARK: UIGestureRecognizerDelegate
 
